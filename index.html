@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Work Timer</title>
+<title>Timer</title>
 <style>
 :root { color-scheme: dark; }
 body{
@@ -16,33 +16,38 @@ body{
   background:rgba(255,255,255,.03);
   border:1px solid rgba(255,255,255,.08);
   border-radius:16px;
-  padding:18px;
+  padding:18px 18px 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
 }
-.title{font-size:13px;opacity:.7;letter-spacing:.08em}
 .time{
-  font-size:56px;font-variant-numeric:tabular-nums;
-  margin:8px 0;
+  font-size:56px;
+  font-variant-numeric:tabular-nums;
+  margin:6px 0 10px;
+  letter-spacing:.02em;
 }
-.row{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;opacity:.85}
+.row{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;opacity:.88}
 .pill{
   border:1px solid rgba(255,255,255,.12);
   padding:6px 10px;border-radius:999px;
+  background:rgba(0,0,0,.18);
+  font-variant-numeric:tabular-nums;
 }
-.btns{display:flex;gap:10px;margin-top:12px}
+.btns{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
 button{
   padding:10px 14px;border-radius:12px;
   background:rgba(255,255,255,.06);
   border:1px solid rgba(255,255,255,.15);
   color:#fff;font-weight:600;cursor:pointer;
 }
+button:hover{ background:rgba(255,255,255,.09); }
 .primary{background:rgba(86,156,255,.25)}
+.gray{background:rgba(255,255,255,.06)}
 .danger{background:rgba(255,86,86,.18)}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="title">WORK TIMER</div>
-  <div class="time" id="now">00:00:00</div>
+  <div class="time" id="session">00:00:00</div>
 
   <div class="row">
     <div class="pill">今日: <span id="day">00:00:00</span></div>
@@ -51,65 +56,128 @@ button{
   </div>
 
   <div class="btns">
-    <button class="primary" id="toggle">Start</button>
+    <button class="primary" id="start">Start</button>
+    <button class="gray" id="stop">Stop</button>
     <button id="add">+ 加算</button>
     <button class="danger" id="reset">Reset</button>
   </div>
 </div>
 
 <script>
-const KEY="chappy_timer_v2";
-const now=()=>Date.now();
-const fmt=(ms)=>{
-  const s=Math.floor(ms/1000);
-  return [s/3600,s/60%60,s%60]
-    .map(v=>String(Math.floor(v)).padStart(2,"0")).join(":");
-};
-const today=()=>new Date().toISOString().slice(0,10);
-const week=()=>{
-  const d=new Date();const n=d.getDay()||7;
-  d.setDate(d.getDate()-n+1);
-  return d.toISOString().slice(0,10);
-};
-let st=JSON.parse(localStorage.getItem(KEY)||"{}");
-st={day:today(),week:week(),run:false,start:0,cur:0,dayT:st.dayT||0,weekT:st.weekT||0,allT:st.allT||0,...st};
+(() => {
+  const KEY = "chappy_timer_v3";
+  const now = () => Date.now();
 
-const rollover=()=>{
-  if(st.day!==today()){st.day=today();st.dayT=0;}
-  if(st.week!==week()){st.week=week();st.weekT=0;}
-};
+  const fmt = (ms) => {
+    ms = Math.max(0, Math.floor(ms));
+    const s = Math.floor(ms / 1000);
+    const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  };
 
-const save=()=>localStorage.setItem(KEY,JSON.stringify(st));
+  const todayKey = () => new Date().toISOString().slice(0,10);
 
-setInterval(()=>{
-  rollover();
-  let e=st.cur+(st.run?(now()-st.start):0);
-  nowEl.textContent=fmt(e);
-  dayEl.textContent=fmt(st.dayT+e);
-  weekEl.textContent=fmt(st.weekT+e);
-  allEl.textContent=fmt(st.allT+e);
-},200);
+  const weekKey = () => {
+    const d = new Date();
+    const day = d.getDay() || 7;          // Mon=1..Sun=7
+    d.setDate(d.getDate() - day + 1);     // Monday
+    return d.toISOString().slice(0,10);
+  };
 
-toggle.onclick=()=>{
-  rollover();
-  if(!st.run){st.run=true;st.start=now();}
-  else{st.cur+=now()-st.start;st.run=false;}
-  save();
-};
+  const load = () => {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  };
 
-add.onclick=()=>{
-  rollover();
-  let e=st.cur+(st.run?(now()-st.start):0);
-  st.dayT+=e;st.weekT+=e;st.allT+=e;
-  st.cur=0;st.start=now();
-  save();
-};
+  const save = () => localStorage.setItem(KEY, JSON.stringify(st));
 
-reset.onclick=()=>{
-  st.run=false;st.cur=0;save();
-};
+  const st = load() || {
+    day: todayKey(),
+    week: weekKey(),
+    running: false,
+    startedAt: 0,     // timestamp
+    sessionMs: 0,     // accumulated in current session when stopped
+    dayTotalMs: 0,
+    weekTotalMs: 0,
+    allTotalMs: 0
+  };
 
-const nowEl=now,dayEl=day,weekEl=week,allEl=all;
+  const rollover = () => {
+    const t = todayKey();
+    const w = weekKey();
+    if (st.day !== t) { st.day = t; st.dayTotalMs = 0; }
+    if (st.week !== w) { st.week = w; st.weekTotalMs = 0; }
+  };
+
+  const currentSession = () => {
+    if (!st.running) return st.sessionMs;
+    return st.sessionMs + (now() - st.startedAt);
+  };
+
+  const $session = document.getElementById("session");
+  const $day = document.getElementById("day");
+  const $week = document.getElementById("week");
+  const $all = document.getElementById("all");
+
+  const tick = () => {
+    rollover();
+
+    const ses = currentSession();
+
+    // 表示：蓄積 + いま動いてる分も含めて見えるようにする（“やった感”重視）
+    $session.textContent = fmt(ses);
+    $day.textContent = fmt(st.dayTotalMs + ses);
+    $week.textContent = fmt(st.weekTotalMs + ses);
+    $all.textContent = fmt(st.allTotalMs + ses);
+
+    requestAnimationFrame(tick);
+  };
+
+  document.getElementById("start").addEventListener("click", () => {
+    rollover();
+    if (st.running) return;          // すでに動いてたら何もしない
+    st.running = true;
+    st.startedAt = now();
+    save();
+  });
+
+  document.getElementById("stop").addEventListener("click", () => {
+    rollover();
+    if (!st.running) return;
+    st.sessionMs += (now() - st.startedAt);
+    st.running = false;
+    st.startedAt = 0;
+    save();
+  });
+
+  // 今のセッション時間を「今日/週/通算」に確定して、セッションを0に戻す
+  document.getElementById("add").addEventListener("click", () => {
+    rollover();
+    const ses = currentSession();
+    st.dayTotalMs += ses;
+    st.weekTotalMs += ses;
+    st.allTotalMs += ses;
+
+    st.sessionMs = 0;
+    if (st.running) st.startedAt = now(); // 続けて計測したいならそのまま走らせる
+    save();
+  });
+
+  // セッションだけ0に（蓄積は残す）
+  document.getElementById("reset").addEventListener("click", () => {
+    st.running = false;
+    st.startedAt = 0;
+    st.sessionMs = 0;
+    save();
+  });
+
+  tick();
+})();
 </script>
 </body>
 </html>
